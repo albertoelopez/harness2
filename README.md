@@ -47,6 +47,14 @@ task-level recursion budget brings further gains.
 The release supports **parallel and sequential recursion**, **OpenCode and
 Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
 
+## Alberto's personal coding harness
+
+This fork adds a local Codex workflow for self-evolving coding instructions,
+skills, and helpers. It reuses Propose–Probe–Compose, checks candidates against
+independent training and held-out tests, retains accepted lessons, and supports
+versioned rollback. Start with the [personal coding guide](docs/PERSONAL_CODING.md).
+The workflow requires no additional Python dependencies.
+
 ## Video overview
 
 https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
