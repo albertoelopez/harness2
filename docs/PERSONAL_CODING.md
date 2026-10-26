@@ -115,6 +115,50 @@ not a container security boundary for hostile generated code. Do not put secrets
 in task sources or prompts. This first version is not a secure evaluation service
 for untrusted third-party submissions.
 
+## Reviewed project lessons
+
+Real-project fixes can supply useful development guidance without establishing that
+an evolved harness is more reliable. Reviewed records live in
+`harness2/lessons/*.json`, separately from the experimentally promoted
+`library/coding/`. Each record includes a situation cue, an actionable lesson,
+public development evidence, a confidence limit, and `verified_project_lesson`
+status. Editing this catalog does not promote a harness or create an experience
+library entry.
+
+The first record, `audio-device-snapshot.json`, cites the public transcribeYouTube
+fix and its changing-probe regression. It advises using the same external-state
+snapshot for a decision and its diagnostic, preserving explicit empty snapshots
+and standalone discovery. Transfer to other projects is not yet measured.
+
+`LocalCodex` automatically appends relevant lessons to coding execution prompts.
+Matching is conservative and deterministic: after normalizing case, punctuation,
+and underscores, the **public task description** must contain a whole phrase from
+every `match_all` group. For example, “Fix contradictory audio-device error
+messages” and “Fix inconsistent service availability diagnostics” match;
+“Implement signed_total” and “Add audio-device recording support” do not. This is
+phrase matching, not semantic understanding; unlisted paraphrases can miss a
+useful lesson. Keep the task description specific to the actual issue.
+
+The coding adapter selects from `task.json`'s `prompt` only, never source code,
+verifiers, or evaluation results. For direct project executions, `runner.run(prompt,
+workspace)` uses the prompt; supply `task_prompt=description` when it also contains
+unrelated background. Proposer, composer, selector, and reflection sessions do not
+automatically retrieve project lessons from their mission text. Existing library
+and public development-evidence flows remain unchanged.
+
+Each session saves the exact injected records in `project-lessons.json` alongside
+its final `prompt.md`. Relevant records are included in execution and experiment
+identities, including the public descriptions of held-out tasks. A changed or
+disabled lesson requires a new output directory for affected experiments. Each
+runner snapshots the catalog at construction. Both comparison arms receive the
+same catalog; this is not evidence of an evolved-harness advantage. To explicitly
+run a control without these lessons, construct `LocalCodex(...,
+use_project_lessons=False)` and use a separate output directory.
+
+The catalog is packaged with the Python distribution and uses no additional
+dependencies. Its retrieval, subprocess delivery, audit, and cache behavior are
+covered by the full test suite.
+
 ## Evidence, continuation, and rollback
 
 The output folder contains:

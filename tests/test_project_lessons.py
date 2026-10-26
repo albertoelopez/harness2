@@ -1,0 +1,155 @@
+"""Project lesson retrieval and real subprocess delivery, without paid model calls."""
+
+import copy
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from harness2.core.context import assert_tree_has_no_grader_verdicts
+from harness2.core.spec import ChannelSpec
+from harness2.local_codex import CodexProposer, LocalCodex
+from harness2.project_lessons import (
+    lesson_context, load_project_lessons, relevant_project_lessons,
+)
+
+
+class ProjectLessonTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.lessons = load_project_lessons()
+        self.binary = self.root / "fake-codex"
+        self.binary.write_text(f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+prompt = sys.stdin.read()
+Path('received-prompt.md').write_text(prompt)
+text = 'lesson received' if '# Relevant project lessons' in prompt else 'no lesson'
+print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': text}}))
+print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output_tokens': 1}}))
+''')
+        self.binary.chmod(0o755)
+
+    def runner(self, **kwargs):
+        return LocalCodex(self.root / 'audit', 'fixture', binary=str(self.binary),
+                          timeout=10, **kwargs)
+
+    def test_catalog_has_public_evidence_and_limited_claim(self):
+        self.assertEqual(len(self.lessons), 1)
+        lesson = self.lessons[0]
+        self.assertEqual(lesson['status'], 'verified_project_lesson')
+        self.assertIn('f52a349d08eaa10bafcde44b38c5f0b5038ee298', lesson['evidence'])
+        self.assertIn('test_audio_device_no_devices_reuses_snapshot', lesson['evidence'])
+        self.assertIn('has not been measured', lesson['confidence'])
+        assert_tree_has_no_grader_verdicts({'project-lesson.md': lesson_context(self.lessons)})
+
+    def test_relevant_cues_cover_original_and_transfer_tasks(self):
+        for prompt in (
+            'Fix contradictory audio-device error messages.',
+            'Service availability checks twice before showing setup guidance.',
+            'Device discovery reports inconsistent state.',
+            'External_state diagnostics must match the decision.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), self.lessons)
+
+    def test_unrelated_and_partial_cues_do_not_match(self):
+        for prompt in (
+            '', 'Implement signed_total.', 'Improve error messages for invalid JSON.',
+            'Add audio-device recording support.', 'Update the service discovery documentation.',
+            'Fix an audio-device diagnostician biography.',
+            'Create a responsive layout with inconsistent margins.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [])
+        self.assertEqual(lesson_context([]), '')
+
+    def test_invalid_catalog_fails_before_starting_a_session(self):
+        catalog = self.root / 'package' / 'lessons'
+        catalog.mkdir(parents=True)
+        invalid = [None, {}, {**self.lessons[0], 'evidence': ''},
+                   {**self.lessons[0], 'status': 'unverified'},
+                   *[{**self.lessons[0], 'match_all': groups}
+                     for groups in (None, [], ['device'], [[]], [['']], [[4]], [['---']])]]
+        for value in invalid:
+            with self.subTest(value=value):
+                (catalog / 'lesson.json').write_text(json.dumps(value))
+                with patch('harness2.project_lessons.files', return_value=catalog.parent):
+                    with self.assertRaisesRegex(ValueError, 'Invalid project lesson'):
+                        self.runner()
+        (catalog / 'lesson.json').write_text('{')
+        with patch('harness2.project_lessons.files', return_value=catalog.parent):
+            with self.assertRaises(json.JSONDecodeError):
+                self.runner()
+        self.assertFalse((self.root / 'audit/calls.json').exists())
+
+    def test_duplicate_ids_rejected_and_non_json_files_ignored(self):
+        catalog = self.root / 'package' / 'lessons'
+        catalog.mkdir(parents=True)
+        (catalog / 'README.md').write_text('Not an executable lesson.')
+        (catalog / 'a.json').write_text(json.dumps(self.lessons[0]))
+        with patch('harness2.project_lessons.files', return_value=catalog.parent):
+            self.assertEqual(load_project_lessons(), self.lessons)
+            (catalog / 'b.json').write_text(json.dumps(self.lessons[0]))
+            with self.assertRaisesRegex(ValueError, 'Duplicate project lesson'):
+                load_project_lessons()
+
+    def test_runner_freezes_catalog_until_a_new_runner_is_created(self):
+        runner = self.runner()
+        changed = copy.deepcopy(self.lessons)
+        changed[0]['lesson'] = 'Revised project guidance.'
+        with patch('harness2.local_codex.load_project_lessons', return_value=changed):
+            self.assertEqual(runner.lessons_for('Audio device error message'), self.lessons)
+            self.assertEqual(self.runner().lessons_for('Audio device error message'), changed)
+
+    def test_subprocess_receives_matching_lesson_with_exact_audit(self):
+        runner = self.runner()
+        result = runner.run('Fix the audio-device error message.', self.root)
+        self.assertEqual(result['text'], 'lesson received')
+        audit = Path(result['audit'])
+        delivered = (self.root / 'received-prompt.md').read_text()
+        self.assertEqual(delivered, (audit / 'prompt.md').read_text())
+        self.assertIn(self.lessons[0]['lesson'], delivered)
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': self.lessons})
+        self.assertEqual(result['project_lessons'], [self.lessons[0]['id']])
+        self.assertFalse((self.root / 'audit/active.json').exists())
+        self.assertFalse((self.root / 'audit/library').exists())
+
+    def test_subprocess_omits_unrelated_guidance_and_obeys_explicit_task_scope(self):
+        runner = self.runner()
+        for prompt, scope in (
+            ('Implement signed_total.', None),
+            ('Background: audio-device error message. Implement signed_total.',
+             'Implement signed_total.'),
+            ('Background: audio-device error message.', ''),
+        ):
+            with self.subTest(prompt=prompt, scope=scope):
+                result = runner.run(prompt, self.root, task_prompt=scope)
+                self.assertEqual(result['text'], 'no lesson')
+                self.assertEqual(result['project_lessons'], [])
+                self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+
+    def test_lessons_can_be_disabled_for_a_control_run(self):
+        result = self.runner(use_project_lessons=False).run(
+            'Fix the audio-device error message.', self.root)
+        self.assertEqual(result['text'], 'no lesson')
+        self.assertEqual(result['project_lessons'], [])
+
+    def test_proposer_does_not_load_project_lessons_from_its_mission(self):
+        runner = self.runner()
+        proposer = CodexProposer(ChannelSpec('codex_cli', 'fixture'), runner,
+                                self.root / 'proposer-audit')
+        reply = proposer.call('Reflect on service discovery diagnostics.', None, 'reflection')
+        self.assertEqual(reply.text, 'no lesson')
+        self.assertEqual(json.loads((self.root / 'audit/sessions/0001/project-lessons.json')
+                                    .read_text()), {'selected': []})
+
+
+if __name__ == '__main__':
+    unittest.main()

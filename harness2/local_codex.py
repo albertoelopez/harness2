@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from .core.proposer import Proposer, ProposerError, Reply, _call_fingerprint
+from .project_lessons import lesson_context, load_project_lessons, relevant_project_lessons
 
 
 def write_json(path: Path, value) -> None:
@@ -38,15 +39,24 @@ def run_process(command, *, cwd, timeout, stdin=None, env=None):
 
 class LocalCodex:
     def __init__(self, root: Path, model: str, *, binary="codex", effort="medium",
-                 max_calls=24, timeout=300):
+                 max_calls=24, timeout=300, use_project_lessons=True):
         if not model.strip() or max_calls < 1 or timeout < 1:
             raise ValueError("model, positive max_calls and positive timeout are required")
         self.root, self.model = Path(root), model
         self.binary, self.effort = binary, effort
         self.max_calls, self.timeout = max_calls, timeout
+        # Snapshot once so every execution in this runner sees the same guidance.
+        self.project_lessons = load_project_lessons() if use_project_lessons else []
         self._lock = threading.Lock()
 
-    def run(self, prompt: str, workspace: Path, *, timeout=None) -> dict:
+    def lessons_for(self, task_prompt: str) -> list[dict]:
+        return relevant_project_lessons(task_prompt, self.project_lessons)
+
+    def run(self, prompt: str, workspace: Path, *, timeout=None, task_prompt=None,
+            include_project_lessons=True) -> dict:
+        lessons = (self.lessons_for(prompt if task_prompt is None else task_prompt)
+                   if include_project_lessons else [])
+        prompt += lesson_context(lessons)
         with self._lock:
             counter = self.root / "calls.json"
             count = json.loads(counter.read_text())["started"] if counter.exists() else 0
@@ -58,6 +68,7 @@ class LocalCodex:
             write_json(counter, {"started": count})
         audit = self.root / "sessions" / f"{count:04d}"
         audit.mkdir(parents=True)
+        write_json(audit / "project-lessons.json", {"selected": lessons})
         (audit / "prompt.md").write_text(prompt, encoding="utf-8")
         command = [
             self.binary, "exec", "--ignore-user-config", "--skip-git-repo-check",
@@ -91,6 +102,7 @@ class LocalCodex:
             "returncode": result.returncode, "wall_s": round(time.monotonic() - started, 3),
             "usage": completed[-1].get("usage", {}) if completed else {},
             "cost_usd": None, "audit": str(audit), "text": messages[-1] if messages else "",
+            "project_lessons": [lesson["id"] for lesson in lessons],
         }
         write_json(audit / "result.json", record)
         if not record["ok"]:
@@ -128,7 +140,8 @@ class CodexProposer(Proposer):
                     "as your final message.\n\n"
                     + system + "\n\n" + mission
                 )
-                result = self.runner.run(prompt, workspace, timeout=timeout)
+                result = self.runner.run(prompt, workspace, timeout=timeout,
+                                         include_project_lessons=False)
                 reply = Reply(label, result["text"], True, wall_s=result["wall_s"],
                               attempts=1, channel="codex_cli")
                 if harvest:

@@ -138,9 +138,13 @@ class CodingAdapter:
         task = self.items[task_id]
         harness = tree.read_tree(self.substrate.surface(), harness_dir or self._base)
         self.validate_tree(harness)
-        identity = digest({"task": task["prompt"], "source": task["files"],
-                           "outputs": task["outputs"], "harness": harness,
-                           "model": self.runner.model, "effort": self.runner.effort})
+        inputs = {"task": task["prompt"], "source": task["files"],
+                  "outputs": task["outputs"], "harness": harness,
+                  "model": self.runner.model, "effort": self.runner.effort}
+        lessons = self.runner.lessons_for(task["prompt"])
+        if lessons:
+            inputs["project_lessons"] = lessons
+        identity = digest(inputs)
         run_dir = self.root / "executions" / safe_relative(run_id)
         marker = run_dir / "execution.json"
         if marker.exists():
@@ -163,6 +167,7 @@ class CodingAdapter:
                 "in the current workspace. Do not spawn agents or read outside the workspace. "
                 "Keep the harness files intact. Implement the requested files, exercise your work, "
                 "and summarize the result.\n\n" + task["prompt"], workspace, timeout=timeout,
+                task_prompt=task["prompt"],
             )
             outputs = {}
             for name in task["outputs"]:
@@ -278,6 +283,10 @@ def run_coding(tasks: dict, holdouts: dict, base: Path, output: Path, runner: Lo
                             for key, task in holdouts.items()},
               "base": initial, "model": runner.model, "effort": runner.effort,
               "k": k, "mode": mode, "timeout": runner.timeout, "verify_timeout": verify_timeout}
+    lessons = {key: selected for key, task in {**tasks, **holdouts}.items()
+               if (selected := runner.lessons_for(task["prompt"]))}
+    if lessons:
+        inputs["project_lessons"] = lessons
     identity = digest(inputs)
     manifest = output / "experiment.json"
     if manifest.exists():

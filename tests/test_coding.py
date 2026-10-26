@@ -1,5 +1,6 @@
 """Unit and subprocess end-to-end coverage for the personal coding workflow."""
 
+import copy
 import json
 import subprocess
 import sys
@@ -288,6 +289,67 @@ class CodingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'changed'):
             adapter.execute('double', None, 'same')
         self.assertFalse(adapter.delivered(rd))
+
+    def test_project_lesson_changes_invalidate_execution_cache(self):
+        tasks = load_tasks(self.root / 'tasks')
+        tasks['double']['prompt'] += ' Fix contradictory audio-device error messages.'
+        runner = self.runner()
+        adapter = CodingAdapter(tasks, self.base, self.output, runner)
+        run = adapter.execute('double', None, 'same')
+        recorded = json.loads((self.output / 'sessions/0001/project-lessons.json').read_text())
+        self.assertEqual(recorded['selected'], runner.lessons_for(tasks['double']['prompt']))
+        self.assertTrue(recorded['selected'])
+        adapter.execute('double', None, 'same')
+        self.assertEqual(json.loads((self.output / 'calls.json').read_text())['started'], 1)
+
+        changed = copy.deepcopy(runner.project_lessons)
+        changed[0]['lesson'] += ' Check that a later operation refreshes the snapshot.'
+        with patch('harness2.local_codex.load_project_lessons', return_value=changed):
+            adapter.runner = self.runner()
+        with self.assertRaisesRegex(ValueError, 'Execution inputs or artifacts changed'):
+            adapter.execute('double', None, 'same')
+        adapter.runner = LocalCodex(self.output, 'fake', binary=str(self.binary),
+                                    timeout=10, use_project_lessons=False)
+        with self.assertRaisesRegex(ValueError, 'Execution inputs or artifacts changed'):
+            adapter.execute('double', None, 'same')
+        self.assertTrue(adapter.artifacts_intact(run))
+        self.assertEqual(json.loads((self.output / 'calls.json').read_text())['started'], 1)
+
+    def test_project_lesson_retrieval_ignores_source_and_verifier_text(self):
+        tasks = load_tasks(self.root / 'tasks')
+        cue = '# Fix contradictory audio-device error messages.\n'
+        tasks['double']['files']['solution.py'] += cue
+        tasks['double']['verifier'] += cue
+        runner = self.runner()
+        adapter = CodingAdapter(tasks, self.base, self.output, runner)
+        adapter.execute('double', None, 'same')
+        recorded = json.loads((self.output / 'sessions/0001/project-lessons.json').read_text())
+        self.assertEqual(recorded, {'selected': []})
+        with patch('harness2.local_codex.load_project_lessons', return_value=[]):
+            adapter.runner = self.runner()
+        adapter.execute('double', None, 'same')
+        self.assertEqual(json.loads((self.output / 'calls.json').read_text())['started'], 1)
+
+    def test_project_lessons_in_experiment_identity_include_holdout_public_prompts(self):
+        manifest = self.root / 'holdout/other/task.json'
+        task = json.loads(manifest.read_text())
+        task['prompt'] += ' Fix contradictory service availability diagnostics.'
+        manifest.write_text(json.dumps(task))
+        result = self.run_cycle()
+        self.assertTrue(result['tasks'][0]['accepted'])
+        inputs = json.loads((self.output / 'experiment.json').read_text())['inputs']
+        self.assertEqual(set(inputs['project_lessons']), {'other'})
+        self.assertTrue(inputs['project_lessons']['other'])
+        sessions = list((self.output / 'sessions').glob('*/project-lessons.json'))
+        self.assertEqual(sum(bool(json.loads(path.read_text())['selected'])
+                             for path in sessions), 2)
+        changed = copy.deepcopy(self.runner().project_lessons)
+        changed[0]['confidence'] += ' Updated review.'
+        for catalog in (changed, []):
+            with self.subTest(catalog=catalog):
+                with patch('harness2.local_codex.load_project_lessons', return_value=catalog):
+                    with self.assertRaisesRegex(ValueError, 'Experiment configuration changed'):
+                        self.run_cycle()
 
     def test_independent_verifier_fails_and_times_out(self):
         task = load_tasks(self.root / 'tasks')['double']

@@ -1,0 +1,12 @@
+{
+  "id": "consistent-external-state-snapshot",
+  "status": "verified_project_lesson",
+  "cue": "A decision and its diagnostic message depend on the same observation of changing external state, such as device discovery or service availability.",
+  "match_all": [
+    ["audio device", "audio devices", "device discovery", "device detection", "available devices", "capture device", "capture devices", "service discovery", "service availability", "external state", "resource availability", "hardware detection"],
+    ["error message", "error messages", "diagnostic", "diagnostics", "setup guidance", "contradictory", "inconsistent", "repeated check", "repeated checks", "checks twice", "check twice", "second probe", "duplicate probe", "probes twice", "duplicate enumeration"]
+  ],
+  "lesson": "Trace the decision and reporting path before editing. Capture external state once for that operation and pass the same snapshot into its diagnostic formatter. Distinguish an explicit empty snapshot from an omitted argument; keep standalone auto-discovery when the snapshot is omitted. Add a deterministic regression whose next probe would return different state, and assert one probe plus consistent guidance. Also cover empty and nonempty snapshots and standalone discovery. Refresh on later independent operations when required; do not cache indefinitely.",
+  "evidence": "Public project albertoelopez/yt-transcribe, commit f52a349d08eaa10bafcde44b38c5f0b5038ee298. Original CLI checked list_audio_devices(), then audio_device_help() probed again. With probe results [] followed by ['Device appeared'], the original path returned an error while listing an available device. The fix passes devices to audio_device_help(devices). Regression tests: tests/test_cli_smoke.py::test_audio_device_no_devices_reuses_snapshot and test_audio_device_list_auto_detects; tests/test_live.py::test_audio_device_help_uses_explicit_snapshot and test_audio_device_help_auto_detects_by_default. The original failing setup-guidance test was retained. These are public development regressions, not private evaluation material.",
+  "confidence": "Verified for this project by the changing-probe reproduction and regression tests. Transfer to other tasks has not been measured; no baseline-versus-evolved reliability gain is attributed to this lesson."
+}
