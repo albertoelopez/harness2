@@ -22,6 +22,10 @@ class ProjectLessonTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.lessons = load_project_lessons()
+        self.audio = next(lesson for lesson in self.lessons
+                          if lesson['id'] == 'consistent-external-state-snapshot')
+        self.vision = next(lesson for lesson in self.lessons
+                           if lesson['id'] == 'early-optional-capability-check')
         self.binary = self.root / "fake-codex"
         self.binary.write_text(f"#!{sys.executable}\n" + '''
 import json
@@ -40,12 +44,18 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
                           timeout=10, **kwargs)
 
     def test_catalog_has_public_evidence_and_limited_claim(self):
-        self.assertEqual(len(self.lessons), 1)
-        lesson = self.lessons[0]
+        self.assertEqual({lesson['id'] for lesson in self.lessons},
+                         {'consistent-external-state-snapshot', 'early-optional-capability-check'})
+        lesson = self.audio
         self.assertEqual(lesson['status'], 'verified_project_lesson')
         self.assertIn('f52a349d08eaa10bafcde44b38c5f0b5038ee298', lesson['evidence'])
         self.assertIn('test_audio_device_no_devices_reuses_snapshot', lesson['evidence'])
         self.assertIn('has not been measured', lesson['confidence'])
+        self.assertEqual(self.vision['status'], 'verified_project_lesson')
+        self.assertIn('b9aa46cd227447db679d79a8613ff8234f3eb548', self.vision['evidence'])
+        self.assertIn('test_describe_preflight_and_outputs', self.vision['evidence'])
+        self.assertIn('has not been measured', self.vision['confidence'])
+        self.assertIn('without a lesson-disabled control', self.vision['confidence'])
         assert_tree_has_no_grader_verdicts({'project-lesson.md': lesson_context(self.lessons)})
 
     def test_relevant_cues_cover_original_and_transfer_tasks(self):
@@ -56,7 +66,36 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
             'External_state diagnostics must match the decision.',
         ):
             with self.subTest(prompt=prompt):
-                self.assertEqual(relevant_project_lessons(prompt, self.lessons), self.lessons)
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [self.audio])
+
+    def test_vision_lesson_matches_original_and_transfer_tasks(self):
+        for prompt in (
+            'Check the installed vision model before batch processing.',
+            'Warn when the selected Ollama model is missing.',
+            'Validate model_inventory during preflight.',
+            'Preserve fallback output when an optional capability is unavailable.',
+            'Check optional dependencies and report missing prerequisites.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [self.vision])
+
+    def test_vision_lesson_ignores_unrelated_and_partial_cues(self):
+        for prompt in (
+            'Improve vision model caption quality.',
+            'Document the Ollama command line.',
+            'Fix a missing transcript heading.',
+            'Check installed audio devices.',
+            'Add a fallback font.',
+            'Explain optional dependencies.',
+            'Evaluate unavailable vision modelers.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [])
+
+    def test_both_lessons_can_match_without_duplicate_delivery(self):
+        prompt = ('Check vision model availability before processing; keep service availability '
+                  'diagnostics consistent. Repeat the vision model availability check next run.')
+        self.assertEqual(relevant_project_lessons(prompt, self.lessons), self.lessons)
 
     def test_unrelated_and_partial_cues_do_not_match(self):
         for prompt in (
@@ -94,7 +133,7 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
         (catalog / 'README.md').write_text('Not an executable lesson.')
         (catalog / 'a.json').write_text(json.dumps(self.lessons[0]))
         with patch('harness2.project_lessons.files', return_value=catalog.parent):
-            self.assertEqual(load_project_lessons(), self.lessons)
+            self.assertEqual(load_project_lessons(), [self.lessons[0]])
             (catalog / 'b.json').write_text(json.dumps(self.lessons[0]))
             with self.assertRaisesRegex(ValueError, 'Duplicate project lesson'):
                 load_project_lessons()
@@ -104,8 +143,8 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
         changed = copy.deepcopy(self.lessons)
         changed[0]['lesson'] = 'Revised project guidance.'
         with patch('harness2.local_codex.load_project_lessons', return_value=changed):
-            self.assertEqual(runner.lessons_for('Audio device error message'), self.lessons)
-            self.assertEqual(self.runner().lessons_for('Audio device error message'), changed)
+            self.assertEqual(runner.lessons_for('Audio device error message'), [self.audio])
+            self.assertEqual(self.runner().lessons_for('Audio device error message'), [changed[0]])
 
     def test_subprocess_receives_matching_lesson_with_exact_audit(self):
         runner = self.runner()
@@ -114,12 +153,36 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
         audit = Path(result['audit'])
         delivered = (self.root / 'received-prompt.md').read_text()
         self.assertEqual(delivered, (audit / 'prompt.md').read_text())
-        self.assertIn(self.lessons[0]['lesson'], delivered)
+        self.assertIn(self.audio['lesson'], delivered)
+        self.assertNotIn(self.vision['lesson'], delivered)
         self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
-                         {'selected': self.lessons})
-        self.assertEqual(result['project_lessons'], [self.lessons[0]['id']])
+                         {'selected': [self.audio]})
+        self.assertEqual(result['project_lessons'], [self.audio['id']])
         self.assertFalse((self.root / 'audit/active.json').exists())
         self.assertFalse((self.root / 'audit/library').exists())
+
+    def test_subprocess_receives_vision_lesson_with_exact_audit(self):
+        result = self.runner().run('Check the installed vision model before batch processing.',
+                                   self.root)
+        self.assertEqual(result['text'], 'lesson received')
+        audit = Path(result['audit'])
+        delivered = (self.root / 'received-prompt.md').read_text()
+        self.assertEqual(delivered, (audit / 'prompt.md').read_text())
+        self.assertIn(self.vision['lesson'], delivered)
+        self.assertNotIn(self.audio['lesson'], delivered)
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': [self.vision]})
+        self.assertEqual(result['project_lessons'], [self.vision['id']])
+
+    def test_vision_lesson_obeys_task_scope_and_control_setting(self):
+        prompt = 'Background: missing vision model. Fix transcript formatting.'
+        result = self.runner().run(prompt, self.root, task_prompt='Fix transcript formatting.')
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+        prompt = 'Fix missing vision model guidance.'
+        result = self.runner(use_project_lessons=False).run(prompt, self.root)
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
 
     def test_subprocess_omits_unrelated_guidance_and_obeys_explicit_task_scope(self):
         runner = self.runner()

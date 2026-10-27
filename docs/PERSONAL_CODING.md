@@ -130,6 +130,15 @@ fix and its changing-probe regression. It advises using the same external-state
 snapshot for a decision and its diagnostic, preserving explicit empty snapshots
 and standalone discovery. Transfer to other projects is not yet measured.
 
+The second record, `vision-model-preflight.json`, cites the public vision-model
+fix and its regression tests. It advises checking a requested optional capability
+before expensive work, distinguishing missing models from unavailable services,
+and preserving independent output with a clear warning. For example, “Check the
+installed vision model before batch processing” retrieves it; “Improve vision
+model caption quality” does not. Runtime fallback still matters because an early
+check cannot guarantee later availability. This pilot verified the fix, not a
+reliability advantage over a lesson-disabled harness.
+
 `LocalCodex` automatically appends relevant lessons to coding execution prompts.
 Matching is conservative and deterministic: after normalizing case, punctuation,
 and underscores, the **public task description** must contain a whole phrase from
