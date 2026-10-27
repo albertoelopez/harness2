@@ -55,6 +55,7 @@ class ContextTree:
     deliverables_mode: str = "contents"
     source_files: int = 0
     decisions: int = 0
+    development: int = 0
 
     @property
     def layout(self) -> str:
@@ -64,6 +65,8 @@ class ContextTree:
             lines.append("context/source/                 task source materials")
         if self.decisions:
             lines.append("context/decisions/              earlier edits and composition decisions")
+        if self.development:
+            lines.append("context/development/<label>/    public regression tests and runner results")
         if self.rollouts:
             names = ", ".join(f"{r}.md" for r in self.rollouts[:6])
             more = f" (+{len(self.rollouts) - 6} more)" if len(self.rollouts) > 6 else ""
@@ -156,6 +159,12 @@ def build(
         n_h = _copy_tree(Path(harness_dir), dest / "harness")
 
     got_p = _write_pool(dest, pool, adapter, trunc, names_only)
+    development = 0
+    evidence_runs = {r.label: r for r in rollouts}
+    evidence_runs.update({label: r for label, _, r in pool if r is not None})
+    for label, run in evidence_runs.items():
+        if run.ok and run.delivered:
+            development += write_development(dest, label, adapter, run.run_dir)
 
     lib = False
     if library_dir and Path(library_dir).is_dir() and any(Path(library_dir).iterdir()):
@@ -185,7 +194,29 @@ def build(
         deliverables_mode=("names" if names_only else "contents"),
         source_files=source_files,
         decisions=len(decisions or {}),
+        development=development,
     )
+
+
+def write_development(dest: Path, label: str, adapter, run_dir: Path) -> int:
+    """Optional public-test channel, subject to the same evidence tripwires."""
+    reader = getattr(adapter, "development_evidence", None)
+    files = reader(run_dir) if callable(reader) else {}
+    if not files:
+        return 0
+    if Path(label).name != label or label in (".", ".."):
+        raise ValueError("Invalid development evidence label")
+    target = dest / "development" / label
+    for name, content in files.items():
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts or "\\" in name:
+            raise ValueError("Development evidence must use contained paths")
+        output = target / path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content, encoding="utf-8")
+    assert_no_leak_paths(target, adapter.spec.leak_globs)
+    assert_no_grader_verdicts(target)
+    return 1
 
 
 def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:

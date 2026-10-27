@@ -228,6 +228,14 @@ def _run_stage(
             harness_tree.write_tree(surface, new, tree.root / "harness")
             continue
         notes = re.search(r"<notes>(.*?)</notes>", reply.text, re.S)
+        note_text = notes.group(1).strip() if notes else reply.text.strip()
+        validate_notes = getattr(adapter, "validate_proposal_notes", None)
+        if callable(validate_notes):
+            try:
+                validate_notes(note_text, tree.root)
+            except ValueError as exc:
+                err = str(exc)
+                continue
         return Stage(
             label=label,
             dim=dim,
@@ -236,7 +244,7 @@ def _run_stage(
             usd=spent_usd,
             attempts=spent_calls,
             cached=all_cached,
-            notes=notes.group(1).strip() if notes else reply.text.strip(),
+            notes=note_text,
         )
 
     return Stage(
