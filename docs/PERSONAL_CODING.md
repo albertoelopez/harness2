@@ -56,7 +56,7 @@ without loading user config. Authentication still uses the existing Codex login.
 User/global instructions may still apply. The runner explicitly authorizes the
 bounded coding task and prohibits delegation in its task prompts.
 
-Each cycle executes the active baseline, proposes general and task-specific
+By default, each cycle executes the active baseline, proposes general and task-specific
 changes, probes them, and composes a candidate through the upstream engine.
 The model sees execution evidence, source material, and earlier accepted lessons.
 Independent verifier code is never copied into its workspace or improvement
@@ -65,12 +65,109 @@ The candidate must pass **every** independent check on its training task and on
 all held-out tasks. Failed checks retain the active baseline and exclude the
 candidate's lesson from the persistent library.
 
+When read-only task source contains evaluator vocabulary, the adapter omits that
+source from refinement context and records the omitted paths outside that context.
+Complete, exact quotations of Python source can also be omitted from the rendered
+trajectory when execution provenance matches the task's source snapshot. Partial
+quotations and unrecognized verdict output still reach the unchanged verdict
+check. Original execution source and raw event logs remain intact. This handling
+concerns benchmark evidence only; it does not change model access or platform
+safety checks.
+
 A changed candidate that passes every check becomes a versioned active harness.
 If both baseline and candidate pass, the report says no quality gain was observed:
 a passing promotion is evidence of retained correctness on those checks, not proof
 of a general improvement. Held-out results are stored separately from the model's
 reflection. Reusing a held-out set indefinitely weakens its value; use additional
 unseen tasks when measuring generalization.
+
+## Learn from public development failures
+
+Opt in with `--development-feedback`. Each training task must then have a trusted
+`development.py` beside its private `verify.py`. The development script is an
+explicitly public regression: assert the requirement, expected result, and actual
+result with a useful failure message. The signed-total example includes one.
+Do not copy the private verifier into this file. The loader rejects identical
+scripts, but that is not a substitute for designing separate cases.
+
+The runner executes this public script against saved baseline and probe outputs
+**before** proposals or composition consume them. Refinement receives
+`context/development/<label>/test.py`, `result.json`, and reproduction instructions.
+The result includes the actual exit status, output, exception, and artifact/test
+fingerprints. Evidence is cached and checked for changes on reuse. A development
+timeout is an incomplete execution and raises an error; it is not a behavior failure.
+Public tests and results are not injected into coding workspaces. Fresh coding
+attempts receive only the task, source, and selected harness.
+
+Every proposal and composition must return a `<notes>` block containing JSON:
+
+```json
+{
+  "evidence": ["base1"],
+  "hypothesis": "Likely cause supported by the observed failure",
+  "change": "Reusable harness behavior to address it, or a reason to KEEP_BASE",
+  "test": "An executable check that could disprove the hypothesis"
+}
+```
+
+Evidence entries may use a rollout label (`base1`) or its exact public-evidence
+directory path (`context/development/base1`). Both identify the same available
+rollout without a format-only retry. Unknown labels, file paths, and other path
+spellings remain invalid; the original citation is preserved in decision notes.
+
+The runner validates the fields and evidence references; it cannot guarantee that
+the model's causal explanation is correct. Invalid notes receive the engine's
+bounded retry, and exhausted retries prevent promotion. The composer sees the
+probe results. With `--mode sequential --k 2`, the second round also sees the first
+candidate's development outcome and can revise it. This is a fixed two-round
+budget, not an unbounded retry-until-pass loop. Selection sees public results under
+anonymous candidate IDs. Existing private-verdict tripwires remain enabled.
+
+After refinement and reflection finish, the candidate is frozen. Only then does
+the runner execute private `verify.py` on the original outputs and on
+`--promotion-runs` fresh coding attempts **per harness** (default five), alternating
+baseline/candidate order. It also checks both harnesses on each held-out task.
+These final test scripts and outcomes never enter refinement or reflection.
+Final verification timeouts stop the experiment without a reliability verdict.
+
+In feedback mode, promotion requires a changed harness, a passing development
+candidate, passing original and fresh candidate final checks, passing candidate
+holdouts, and strictly more fresh successes than the baseline. Ties retain the
+baseline. Reports separate development evidence, original checks, and fresh-run
+counts. A five-attempt difference is preliminary evidence, not statistical proof.
+
+For a new failure-driven study, turn the already-observed failure into a public
+development regression, and freeze new private variants and related held-out
+tasks before launching models. Results from previously exposed tests measure
+repair, not unseen generalization. Never replace the prior experiment's frozen
+files; use a new task suite and output directory.
+
+An example input validation command (no model calls):
+
+```sh
+python3.12 -m harness2.cli.coding run \
+  --tasks examples/coding/tasks \
+  --holdout examples/coding/holdout \
+  --base examples/coding/base \
+  --output runs/personal-coding-feedback \
+  --development-feedback --mode sequential --k 2 \
+  --promotion-runs 5 --max-calls 32 --dry-run
+```
+
+Set `HARNESS2_CODEX_MODEL` or pass `--model` as above. Enabling feedback, changing
+its tests, or changing the fresh-run count requires a new output directory.
+Existing runs without the flag keep the original feedback-free behavior.
+
+For the next real reliability study, budget **30 planned model sessions, capped
+at 32**: 16 for two refinement rounds (eight coding executions, six edits, one
+selection, one reflection), ten for five fresh attempts per harness, and four for
+two related held-out tasks under both harnesses. The remaining two slots cover
+invalid-proposal retries, not extra sampling until a favorable result appears.
+The runner reserves the fresh and held-out execution slots during refinement;
+if refinement exhausts its share, it stops rather than consuming that reserve.
+With only one held-out task, the planned total is 28. Local development/final
+tests consume no model sessions. This recommendation does not launch or authorize
+a new paid/account-usage experiment.
 
 ## Add your own tasks
 
@@ -83,6 +180,7 @@ my-tasks/
     source/
       solution.py
     verify.py
+    development.py  # optional public regression; required with --development-feedback
 ```
 
 `task.json` declares the input and exact deliverable paths:
@@ -183,6 +281,11 @@ The output folder contains:
 | `calls.json` | Total model sessions started, including failed calls |
 | `experiment.json` | Fixed experiment inputs and their fingerprint |
 
+In feedback mode, each refinement execution also has `development.json`, bound
+to `execution.json` by a digest. Private checks are saved as `verification.json`
+outside model context. The promotion report adds `development` records and a
+`fresh` summary; individual final results are under `checks/fresh/<arm>/<number>`.
+
 The original source checkout is never edited by coding rollouts. The CLI locks
 its output folder against concurrent runs. Completed executions are reused only
 when their input identity and artifacts match. Changing model, tasks, verifiers,
@@ -221,3 +324,12 @@ sessions, rejected held-out regressions, call limits, immutable evaluation input
 artifact integrity, rollback, and the public command. It does not prove a real
 model improves. Run the command above without `--dry-run` for a model-backed
 experiment, then inspect the baseline/candidate checks and `quality_gain_observed`.
+Feedback tests additionally cover public evidence arriving before composition,
+a second round resolving an earlier failure, anonymous selection using public
+results, private-result isolation, altered evidence, incomplete checks, and
+fresh-run promotion gates. These fixtures exercise the mechanism, not real model
+learning or general reliability.
+An additional subprocess regression uses directory-path evidence citations through
+two refinement rounds, model selection, reflection, five fresh attempts per harness,
+and two held-out tasks. It completes in 30 fixture sessions under a 32-session cap
+and checks that the reflected lesson is persisted only after final gates pass.

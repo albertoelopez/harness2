@@ -196,6 +196,7 @@ def _write_candidates(
     asset_names: set[str] = set()
     for anon, lbl in sel.id_map.items():
         text = artifacts[lbl]
+        context.write_development(cand_dir.parent, anon, adapter, pool[lbl].run_dir)
         assets: list[Path] = []
         if callable(asset_fn):
             assets = [Path(a) for a in (asset_fn(pool[lbl].run_dir) or []) if Path(a).is_file()]

@@ -28,6 +28,10 @@ def main(argv=None):
                      help="Total session starts per output folder")
     run.add_argument("--timeout", type=int, default=300, help="Seconds per model session")
     run.add_argument("--verify-timeout", type=int, default=30)
+    run.add_argument("--development-feedback", action="store_true",
+                     help="Feed public development.py results to refinement; keep verify.py private")
+    run.add_argument("--promotion-runs", type=int, default=5,
+                     help="Fresh attempts per harness before promotion with development feedback")
     run.add_argument("--dry-run", action="store_true", help="Validate inputs without model calls")
     restore = commands.add_parser("rollback",
                                   help="Activate a saved version and clear learned lessons")
@@ -41,12 +45,14 @@ def main(argv=None):
         tasks, holdouts = load_tasks(args.tasks.resolve()), load_tasks(args.holdout.resolve())
         if set(tasks) & set(holdouts):
             parser.error("training and held-out task IDs must be distinct")
-        if min(args.k, args.max_calls, args.timeout, args.verify_timeout) < 1:
-            parser.error("k, max-calls and timeouts must be positive")
+        if min(args.k, args.max_calls, args.timeout, args.verify_timeout, args.promotion_runs) < 1:
+            parser.error("k, max-calls, promotion-runs and timeouts must be positive")
         runner = LocalCodex(output, args.model, binary=args.codex, effort=args.effort,
                             max_calls=args.max_calls, timeout=args.timeout)
         from ..coding import CodingAdapter
-        CodingAdapter(tasks, args.base.resolve(), output, runner)
+        CodingAdapter(tasks, args.base.resolve(), output, runner,
+                      development_feedback=args.development_feedback,
+                      development_timeout=args.verify_timeout)
         if args.dry_run:
             print(f"Validated {len(tasks)} coding task(s), {len(holdouts)} held-out task(s).")
             print(f"Codex model: {args.model}; {args.mode}; k={args.k}; max calls={args.max_calls}")
@@ -62,7 +68,9 @@ def main(argv=None):
             print(f"Active harness restored to {args.version}")
         else:
             result = run_coding(tasks, holdouts, args.base.resolve(), output, runner,
-                                k=args.k, mode=args.mode, verify_timeout=args.verify_timeout)
+                                k=args.k, mode=args.mode, verify_timeout=args.verify_timeout,
+                                development_feedback=args.development_feedback,
+                                promotion_runs=args.promotion_runs)
             print(f"Report: {output / 'report.json'}")
             print(f"Active harness: {output / 'versions' / result['active']['version']}")
     return 0
