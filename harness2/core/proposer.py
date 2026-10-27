@@ -99,6 +99,8 @@ class Proposer:
     _calls: list[Reply] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.spec.kind == "codex_cli" and type(self) is Proposer:
+            raise ValueError("Use CodexProposer via harness2-coding for the local Codex channel")
         if not self.spec.model.strip():
             raise ValueError("Set HARNESS2_IMPROVER_MODEL before starting model sessions")
 

@@ -1,0 +1,5 @@
+{
+  "id": "signed_total",
+  "prompt": "Implement total_amounts(rows) in solution.py. Each row is a dictionary with an amount string. Sum every signed amount exactly using Decimal, including credits (negative amounts). Return a Decimal, return Decimal('0') for no rows, and raise ValueError for missing, malformed, NaN, or infinite amounts. Do not modify caller data.",
+  "outputs": ["solution.py"]
+}

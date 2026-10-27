@@ -1,0 +1,5 @@
+{
+  "id": "stable_unique",
+  "prompt": "Implement stable_unique(values) in solution.py. Return a new list containing only the first occurrence of each value, preserving input order. Support unhashable values such as lists and dictionaries, using equality to identify duplicates. Accept any finite iterable. Do not mutate the input.",
+  "outputs": ["solution.py"]
+}
