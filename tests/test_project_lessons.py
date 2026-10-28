@@ -26,6 +26,8 @@ class ProjectLessonTests(unittest.TestCase):
                           if lesson['id'] == 'consistent-external-state-snapshot')
         self.vision = next(lesson for lesson in self.lessons
                            if lesson['id'] == 'early-optional-capability-check')
+        self.cleanup = next(lesson for lesson in self.lessons
+                            if lesson['id'] == 'operation-scoped-output-cleanup')
         self.binary = self.root / "fake-codex"
         self.binary.write_text(f"#!{sys.executable}\n" + '''
 import json
@@ -45,7 +47,8 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
 
     def test_catalog_has_public_evidence_and_limited_claim(self):
         self.assertEqual({lesson['id'] for lesson in self.lessons},
-                         {'consistent-external-state-snapshot', 'early-optional-capability-check'})
+                         {'consistent-external-state-snapshot', 'early-optional-capability-check',
+                          'operation-scoped-output-cleanup'})
         lesson = self.audio
         self.assertEqual(lesson['status'], 'verified_project_lesson')
         self.assertIn('f52a349d08eaa10bafcde44b38c5f0b5038ee298', lesson['evidence'])
@@ -56,6 +59,11 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
         self.assertIn('test_describe_preflight_and_outputs', self.vision['evidence'])
         self.assertIn('has not been measured', self.vision['confidence'])
         self.assertIn('without a lesson-disabled control', self.vision['confidence'])
+        self.assertEqual(self.cleanup['status'], 'verified_project_lesson')
+        self.assertIn('8ba7d81c1ea6691f3c7287754e92d361a270644b', self.cleanup['evidence'])
+        self.assertIn('test_cleanup_is_exact_and_idempotent', self.cleanup['evidence'])
+        self.assertIn('has not been measured', self.cleanup['confidence'])
+        self.assertIn('baseline fixed the issue on its first attempt', self.cleanup['confidence'])
         assert_tree_has_no_grader_verdicts({'project-lesson.md': lesson_context(self.lessons)})
 
     def test_relevant_cues_cover_original_and_transfer_tasks(self):
@@ -95,7 +103,66 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
     def test_both_lessons_can_match_without_duplicate_delivery(self):
         prompt = ('Check vision model availability before processing; keep service availability '
                   'diagnostics consistent. Repeat the vision model availability check next run.')
-        self.assertEqual(relevant_project_lessons(prompt, self.lessons), self.lessons)
+        self.assertEqual(relevant_project_lessons(prompt, self.lessons), [self.audio, self.vision])
+
+    def test_cleanup_lesson_matches_original_and_transfer_tasks(self):
+        for prompt in (
+            'Fix stale translated transcripts when reusing an output directory.',
+            'Clean up translation files from the prior run.',
+            'Handle reused output directories in the report exporter.',
+            'Keep incremental output intact during cleanup.',
+            'Remove stale generated artifacts for the requested variant.',
+            'Fix OUTPUT_LIFECYCLE cleanup on reruns.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [self.cleanup])
+
+    def test_cleanup_lesson_ignores_unrelated_and_partial_cues(self):
+        for prompt in (
+            'Improve translation quality.', 'Render translated transcripts.',
+            'Create an output directory.', 'Clean up variable names.',
+            'Fix a stale login session.', 'Reuse the loaded Whisper model.',
+            'Remove stale generated filenames from a documentation sentence.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [])
+
+    def test_subprocess_receives_cleanup_lesson_with_exact_audit(self):
+        result = self.runner().run('Fix stale translation files in reused output directories.',
+                                   self.root)
+        self.assertEqual(result['text'], 'lesson received')
+        audit = Path(result['audit'])
+        delivered = (self.root / 'received-prompt.md').read_text()
+        self.assertEqual(delivered, (audit / 'prompt.md').read_text())
+        self.assertIn(self.cleanup['lesson'], delivered)
+        self.assertNotIn(self.audio['lesson'], delivered)
+        self.assertNotIn(self.vision['lesson'], delivered)
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': [self.cleanup]})
+        self.assertEqual(result['project_lessons'], [self.cleanup['id']])
+
+    def test_cleanup_lesson_obeys_scope_and_control_setting(self):
+        prompt = 'Background: stale translation files. Improve caption formatting.'
+        result = self.runner().run(prompt, self.root, task_prompt='Improve caption formatting.')
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+        prompt = 'Clean up stale translation files.'
+        result = self.runner(use_project_lessons=False).run(prompt, self.root)
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+
+    def test_cleanup_and_vision_lessons_are_delivered_once_when_both_match(self):
+        result = self.runner().run(
+            'Check a missing optional dependency and clean up stale translation files. '
+            'Preserve output files during cleanup.', self.root)
+        expected = [self.cleanup, self.vision]
+        self.assertEqual(result['project_lessons'], [lesson['id'] for lesson in expected])
+        audit = Path(result['audit'])
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': expected})
+        delivered = (self.root / 'received-prompt.md').read_text()
+        for lesson in expected:
+            self.assertEqual(delivered.count(lesson['lesson']), 1)
 
     def test_unrelated_and_partial_cues_do_not_match(self):
         for prompt in (

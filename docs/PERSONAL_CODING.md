@@ -237,6 +237,15 @@ model caption quality” does not. Runtime fallback still matters because an ear
 check cannot guarantee later availability. This pilot verified the fix, not a
 reliability advantage over a lesson-disabled harness.
 
+The third record, `translation-output-cleanup.json`, cites the public translation
+cleanup fix and its reused-directory regressions. It advises clearing only a
+requested operation's known stale outputs once at startup, preserving unrelated
+files, and propagating cleanup errors. “Fix stale translated transcripts when
+reusing an output directory” retrieves it; “Improve translation quality” does not.
+Incremental flushes must preserve newly generated output. Apply the advice only
+when the task's retention requirements call for replacing prior results. The
+baseline fixed this issue on its first attempt; transfer reliability is unmeasured.
+
 `LocalCodex` automatically appends relevant lessons to coding execution prompts.
 Matching is conservative and deterministic: after normalizing case, punctuation,
 and underscores, the **public task description** must contain a whole phrase from
