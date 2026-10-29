@@ -28,6 +28,8 @@ class ProjectLessonTests(unittest.TestCase):
                            if lesson['id'] == 'early-optional-capability-check')
         self.cleanup = next(lesson for lesson in self.lessons
                             if lesson['id'] == 'operation-scoped-output-cleanup')
+        self.retention = next(lesson for lesson in self.lessons
+                              if lesson['id'] == 'retained-artifact-ownership')
         self.binary = self.root / "fake-codex"
         self.binary.write_text(f"#!{sys.executable}\n" + '''
 import json
@@ -48,7 +50,7 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
     def test_catalog_has_public_evidence_and_limited_claim(self):
         self.assertEqual({lesson['id'] for lesson in self.lessons},
                          {'consistent-external-state-snapshot', 'early-optional-capability-check',
-                          'operation-scoped-output-cleanup'})
+                          'operation-scoped-output-cleanup', 'retained-artifact-ownership'})
         lesson = self.audio
         self.assertEqual(lesson['status'], 'verified_project_lesson')
         self.assertIn('f52a349d08eaa10bafcde44b38c5f0b5038ee298', lesson['evidence'])
@@ -62,9 +64,71 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output
         self.assertEqual(self.cleanup['status'], 'verified_project_lesson')
         self.assertIn('8ba7d81c1ea6691f3c7287754e92d361a270644b', self.cleanup['evidence'])
         self.assertIn('test_cleanup_is_exact_and_idempotent', self.cleanup['evidence'])
-        self.assertIn('has not been measured', self.cleanup['confidence'])
+        self.assertIn('no observed reliability gain', self.cleanup['confidence'])
+        self.assertIn('did not run a lesson-enabled comparison', self.cleanup['confidence'])
         self.assertIn('baseline fixed the issue on its first attempt', self.cleanup['confidence'])
+        self.assertIn('82992e1a67d37aa345fc328f906a474f28032002', self.retention['evidence'])
+        self.assertIn('test_reconnect_keeps_earlier_images', self.retention['evidence'])
+        self.assertIn('has not undergone a transfer comparison', self.retention['confidence'])
         assert_tree_has_no_grader_verdicts({'project-lesson.md': lesson_context(self.lessons)})
+
+    def test_retention_lesson_matches_reconnect_and_ownership_tasks(self):
+        for prompt in (
+            'Prevent live frames from being overwritten on reconnect.',
+            'Fix FRAME_CAPTURE cleanup on early close.',
+            'Preserve retained artifacts across producer restarts.',
+            'Clarify ownership of yielded files when a consumer fails.',
+            'Keep captured images intact when reconnecting.',
+            'Do not overwrite published artifacts.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [self.retention])
+
+    def test_retention_lesson_ignores_unrelated_and_partial_cues(self):
+        for prompt in (
+            'Improve frame capture quality.', 'Reconnect the database client.',
+            'Clean up variable names.', 'Document retained artifacts.',
+            'Remove a live framework during cleanup.',
+            'Fix frame capture restarters.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(relevant_project_lessons(prompt, self.lessons), [])
+
+    def test_subprocess_receives_retention_lesson_with_exact_audit(self):
+        result = self.runner().run('Preserve live frames across reconnects.', self.root)
+        self.assertEqual(result['text'], 'lesson received')
+        audit = Path(result['audit'])
+        delivered = (self.root / 'received-prompt.md').read_text()
+        self.assertEqual(delivered, (audit / 'prompt.md').read_text())
+        self.assertIn(self.retention['lesson'], delivered)
+        for lesson in (self.audio, self.vision, self.cleanup):
+            self.assertNotIn(lesson['lesson'], delivered)
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': [self.retention]})
+        self.assertEqual(result['project_lessons'], [self.retention['id']])
+
+    def test_retention_lesson_obeys_task_scope_and_control_setting(self):
+        prompt = 'Background: live frames reconnect. Improve caption formatting.'
+        result = self.runner().run(prompt, self.root, task_prompt='Improve caption formatting.')
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+        prompt = 'Fix retained files cleanup.'
+        result = self.runner(use_project_lessons=False).run(prompt, self.root)
+        self.assertEqual(result['project_lessons'], [])
+        self.assertEqual((self.root / 'received-prompt.md').read_text(), prompt)
+
+    def test_retention_and_cleanup_lessons_are_delivered_once_when_both_match(self):
+        result = self.runner().run(
+            'Preserve retained files during output directory cleanup after reconnect. '
+            'Check retained files ownership.', self.root)
+        expected = [self.retention, self.cleanup]
+        self.assertEqual(result['project_lessons'], [lesson['id'] for lesson in expected])
+        audit = Path(result['audit'])
+        self.assertEqual(json.loads((audit / 'project-lessons.json').read_text()),
+                         {'selected': expected})
+        delivered = (self.root / 'received-prompt.md').read_text()
+        for lesson in expected:
+            self.assertEqual(delivered.count(lesson['lesson']), 1)
 
     def test_relevant_cues_cover_original_and_transfer_tasks(self):
         for prompt in (
