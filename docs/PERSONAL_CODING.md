@@ -244,7 +244,29 @@ files, and propagating cleanup errors. “Fix stale translated transcripts when
 reusing an output directory” retrieves it; “Improve translation quality” does not.
 Incremental flushes must preserve newly generated output. Apply the advice only
 when the task's retention requirements call for replacing prior results. The
-baseline fixed this issue on its first attempt; transfer reliability is unmeasured.
+baseline fixed this issue on its first attempt. The subsequent report-export
+comparison completed five fresh attempts per condition: disabled **5/5**, enabled
+**5/5**, with no observed reliability gain. This small comparison does not establish
+equivalence. The live-frame reconnect study stopped after all three allowed
+lesson-disabled screenings succeeded; it did not run an enabled arm or the planned
+fresh comparison. These are completed study summaries, not new model instructions
+or permission to reuse the same private tests for unseen evaluation. Local evidence
+is in `runs/report-export-cleanup-transfer/RESULTS.md` and
+`runs/live-frame-reconnect-transfer/RESULTS.md`; those ignored artifacts are not
+included in a clone of this repository.
+
+The fourth record, `live-frame-retention.json`, cites the merged reconnect fix at
+transcribeYouTube commit `82992e1a67d37aa345fc328f906a474f28032002` and its 20 public
+regression cases. It advises staging captures privately, publishing completed files
+under unique names, transferring ownership explicitly, and stopping the producer
+before cleaning unyielded files. Accepted retained images survive reconnects and
+later callback failures; rejected and unkept images are removed without deleting
+earlier outputs or unrelated files. “Preserve live frames across reconnects”
+retrieves it; “Improve frame capture quality” does not. Both retention and cleanup
+guidance can load when both apply; the current task's retention requirements take
+precedence. The applied unit and e2e suite passed 287 tests with one existing skip.
+This implementation came from a lesson-disabled attempt; the new retention lesson
+has not undergone a transfer comparison and carries no demonstrated reliability gain.
 
 `LocalCodex` automatically appends relevant lessons to coding execution prompts.
 Matching is conservative and deterministic: after normalizing case, punctuation,
